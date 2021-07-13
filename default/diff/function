@@ -25,6 +25,43 @@ check_for_unmanaged_files(){
 }
 
 
+ask_for_commit_type(){
+    echo -e "\e[1;96mWas für einen Typ soll der Commit haben?\e[0m \n"\
+    "\n    1. INITIAL\t\t\e[2mErster Commit\e[0m" \
+    "\n    2. FEAT\t\t\e[2mEin neues Feature für den User\e[0m" \
+    "\n    3. ENHANCEMENT\t\e[2mEine kleine Modifikation, die einen Vorteil erbringt\e[0m" \
+    "\n    4. FIX\t\t\e[2mBeheben von Bugfixes\e[0m" \
+    "\n    5. DOCS\t\t\e[2mUpdate der Dokumentation\e[0m" \
+    "\n    6. STYLE\t\t\e[2mÄnderung an der Ausgabe oder dem Erscheinungsbild\e[0m" \
+    "\n    7. REFACTOR\t\t\e[2mUmschreiben von Code ohne neue Features\e[0m" \
+    "\n    8. OTHER\t\t\e[2mAlles andere\e[0m\n"
+
+    read -e commit_type_input
+    local commit_type_input=$(echo $commit_type_input | sed -e 's/\(.\)/\1 /g' | sed 's/ /\n/g' | sort)
+    local amount_of_commit_types=$(echo $commit_type_input | wc -w)
+    local commit_type_counter=0
+    local commit_type="{"
+    for type_input in $commit_type_input; do
+        ((commit_type_counter++))
+        case $type_input in
+            S|s|A|a) return 1 ;;
+            1) type_input="INITIAL" ;;
+            2) type_input="FEAT" ;;
+            3) type_input="ENHANCEMENT" ;;
+            4) type_input="FIX" ;;
+            5) type_input="DOCS" ;;
+            6) type_input="STYLE" ;;
+            7) type_input="REFACTOR" ;;
+            *) type_input="OTHER" ;;
+        esac
+        commit_type+=$type_input
+        [[ $commit_type_counter != $amount_of_commit_types ]] && commit_type+=" & "
+    done
+    commit_type+="}"
+
+    echo $commit_type > /tmp/.diffcommit
+}
+
 commit_files(){
     #Die Dateien durchgehen und gegebenenfalls committen
     git_status=$(git status 2>&1)
@@ -80,6 +117,13 @@ commit_files(){
 
         print_line "-"
 
+        ask_for_commit_type
+        commit_type=$(cat /tmp/.diffcommit && rm -f /tmp/.diffcommit)
+        [[ $? == 1 ]] && return
+
+
+
+
         echo -e "\e[1;96mWie soll die Commit-Nachricht lauten?\e[0m"
         [[ ${#commit_messages[@]} != 0 ]] && echo -e "Die letzten Commit Nachrichten: \e[2m(Um eine davon zu benutzen, die entsprechende Zahl angeben)\e[0m" #Wenn es vorherige Commits gibt werden diese nun angezeigt
         commit_counter=0
@@ -91,7 +135,7 @@ commit_files(){
         [[ $(echo $files | wc -w) != 1 || $unmanaged_files == true ]] && echo -e "    - A    Alle Dateien committen"
         echo -e "    - C    Die lokalen Änderungen verwerfen"\
         "\n    - L    Die letzte Commitnachricht verwenden"
-        [[ $changed == "true" ]] && echo -e "- R    Letzten Commit rückgängig machen"
+        [[ $changed == "true" ]] && echo -e "    - R    Letzten Commit rückgängig machen"
         echo -e "    - S    Stop"
         [[ $changed == "true" ]] && echo -e "    - U    Letzte Comitnachricht umbenennen"
         echo -e "\e[1;30mWenn nichts angegeben wird, wird die Datei übersprungen\n\e[0m"
@@ -155,6 +199,7 @@ commit_files(){
             return 1
 
         elif [[ $commit_message =~ ^[Uu]$ ]]; then #Letze Commitnachricht umbenennen
+            commit_type=ask_for_commit_type
             echo -e "\n\e[96mWie soll die neue Commtnachricht heißen?\e[0m \e[2m(\"S\" zum Abbrechen)\e[0m"
             read -e answer
             if [[ $answer =~ ^[Ss]$ ]]; then #Stop(Abbrechen)
@@ -164,11 +209,12 @@ commit_files(){
                 echo -e "\e[33mDie Commit-Nachricht war zu kurz. Sie muss mindestens fünf Zeichen haben\e[0m"
                 return 1
             fi
-            commit_messages[${#commit_messages[@]}]="$answer" #Die neue Nachricht überschreibt die alte
-            git commit --amend -s -m "$answer"
+            commit_messages[${#commit_messages[@]}]="$commit_type""$answer" #Die neue Nachricht überschreibt die alte
+            last_commit_message="$commit_type""$commit_message"
+            git commit --amend -s -m "$last_commit_message"
             return 1
 
-        elif [[ $commit_message =~ ^[Rr]$ ]]; then #Letzen Commit rückgängig machen
+        elif [[ $commit_message =~ ^[Rr]$ ]]; then #Letzten Commit rückgängig machen
             local commit_message=$(git log | head -n 10 | grep -v "^Merge\|^Author\|^Date\|Signed-off-by" | egrep -v [a-z0-9]{40} | sed '/^[[:space:]]*$/d' | sed 's/^ *//g')
             local date=$(git log --date=format:'%d.%m.' | head -n 10 | grep ^Date | cut -d ":" -f2- | sed 's/^ *//g')
             local time=$(git log --date=format:'%H:%M:%S' | head -n 10 | grep ^Date | cut -d ":" -f2- | sed 's/^ *//g')
@@ -182,9 +228,9 @@ commit_files(){
             continue
 
         else #Commit mit dem angegeben Text
-            commit_messages[$((${#commit_messages[@]} + 1 ))]="$commit_message" #Den aktuellen Commit ins Array packen
-            last_commit_message=$commit_message
-	        git commit -s "$file" -m "$commit_message" || echo -e "\e[31mEs gab ein Problem beim Commit!\e[0m"
+            commit_messages[$((${#commit_messages[@]} + 1 ))]="$commit_type""$commit_message" #Den aktuellen Commit ins Array packen
+            last_commit_message="$commit_type""$commit_message"
+	        git commit -s "$file" -m "$last_commit_message" || echo -e "\e[31mEs gab ein Problem beim Commit!\e[0m"
         fi
 
 
@@ -223,7 +269,7 @@ push(){
             git commit --amend -s -m "$answer"
             echo -e "\n\e[32mSollen die Änderungen nun gepusht werden?\e[0m \e[2m(\"U\" zum erneuten Umbenennen des letzten Commits)\e[0m"
             git log origin/$branch..$branch | grep -v "^Merge\|^Author\|^Date\|Signed-off-by" | egrep -v [a-z0-9]{40} | sed '/^[[:space:]]*$/d' | awk '!x[$0]++' | nl
-        elif [[ $answer =~ ^[Rr]$ ]]; then #Letzen Commit rückgängig machen
+        elif [[ $answer =~ ^[Rr]$ ]]; then #Letzten Commit rückgängig machen
             local commit_message=$(git log | head -n 10 | grep -v "^Merge\|^Author\|^Date\|Signed-off-by" | egrep -v [a-z0-9]{40} | sed '/^[[:space:]]*$/d' | sed 's/^ *//g')
             local date=$(git log --date=format:'%d.%m.' | head -n 10 | grep ^Date | cut -d ":" -f2- | sed 's/^ *//g')
             local time=$(git log --date=format:'%H:%M:%S' | head -n 10 | grep ^Date | cut -d ":" -f2- | sed 's/^ *//g')
@@ -352,7 +398,7 @@ diff_function(){
                     if [[ -z $amount ]]; then
                         echo -ne "\e[33mEs gibt noch Commits, die noch nicht hochgeladen wurden. Sollen sie jetzt hochgeladen werden?\e[0m"
                     elif [[ $amount == 1 ]]; then
-                        echo -e "\e[33mEs gibt noch einen Commit, der noch nicht hochgeladen wurde. Soll er jetzt hochgeladen werden?\e[0m \e[2m(\"U\" zum Umbenennen des letzten Commits)\e[0m"
+                        echo -e "\e[33mEs gibt noch einen Commit, der noch nicht hochgeladen wurde. Soll er jetzt hochgeladen werden?\e[0m"
                         git log origin/$branch..$branch | sed -n 5p
                     else
                         number_of_duplicates=$(( $amount - $(git log origin/$branch..$branch | grep -v "^Merge\|^Author\|^Date\|Signed-off-by" | egrep -v [a-z0-9]{40} | sed '/^[[:space:]]*$/d' | awk '!x[$0]++' | wc -l) )) >/dev/null #Alle minus die nicht doppelten
@@ -363,7 +409,6 @@ diff_function(){
                         else
                             echo -ne "\e[33mEs gibt noch $amount Commits ($number_of_duplicates doppelte), die noch nicht hochgeladen wurden. Sollen sie jetzt hochgeladen werden?\e[0m"
                         fi
-                        echo -e "\e[2m (\"U\" zum Umbenennen des letzten Commits)\e[0m"
                         git log origin/$branch..$branch | grep -v "^Merge\|^Author\|^Date\|Signed-off-by" | egrep -v [a-z0-9]{40} | sed '/^[[:space:]]*$/d' | awk '!x[$0]++' | nl
                     fi
                     push
